@@ -44,6 +44,8 @@ impl DNSQuestion {
             res.extend_from_slice(x.as_bytes());
         }
         res.push(0);
+        res.extend_from_slice(&self.r#type.to_be_bytes());
+        res.extend_from_slice(&self.class.to_be_bytes());
         res
     }
 }
