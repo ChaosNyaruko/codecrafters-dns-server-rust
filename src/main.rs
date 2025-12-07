@@ -1,8 +1,8 @@
 #[allow(unused_imports)]
 use std::net::UdpSocket;
 
-#[derive(Debug)]
-struct DNSMessage {
+#[derive(Debug, Clone, Copy)]
+struct DNSHeader {
     id: u16,
     qr: bool,   // false for question, true for reply
     opcode: u8, // 4bit
@@ -18,7 +18,46 @@ struct DNSMessage {
     arcount: u16,
 }
 
-impl DNSMessage {
+#[derive(Debug, Clone)]
+struct DNSQuestion {
+    name: String,
+    r#type: u16,
+    class: u16,
+}
+
+impl DNSQuestion {
+    fn parse_from_buf(_buf: &[u8]) -> Self {
+        Self {
+            name: todo!(),
+            r#type: todo!(),
+            class: todo!(),
+        }
+    }
+
+    fn pack(&self) -> Vec<u8> {
+        let mut res = Vec::new();
+        let names = self.name.split('.');
+        // self.name is guaranteed to be "ascii" text
+        for x in names {
+            let len = x.len() as u8;
+            res.push(len);
+            res.extend_from_slice(x.as_bytes());
+        }
+        res.push(0);
+        res
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DNSMessage {
+    header: DNSHeader,
+    questions: Vec<DNSQuestion>,
+    answer: (),
+    authority: (),
+    additional: (),
+}
+
+impl DNSHeader {
     fn pack(&self) -> [u8; 12] {
         let mut res = [0; 12];
         let mut i = 0;
@@ -51,7 +90,7 @@ impl DNSMessage {
         return res;
     }
 
-    fn parse(buf: &[u8]) -> Self {
+    fn parse_from_buf(buf: &[u8]) -> Self {
         let mut id = [0; 2];
         let mut i: usize = 0;
         id.copy_from_slice(&buf[i..i + 2]);
@@ -111,6 +150,36 @@ impl DNSMessage {
     }
 }
 
+impl DNSMessage {
+    fn parse(buf: &[u8]) -> Self {
+        let header = DNSHeader::parse_from_buf(buf);
+        let mut questions = Vec::<DNSQuestion>::with_capacity(header.qdcount as usize);
+        for _ in 0..header.qdcount {
+            let question = DNSQuestion::parse_from_buf(buf);
+            questions.push(question);
+        }
+        Self {
+            header,
+            questions,
+            answer: (),
+            authority: (),
+            additional: (),
+        }
+    }
+
+    fn pack(&self) -> Vec<u8> {
+        let mut res = Vec::new();
+        let header = self.header.pack();
+        res.extend_from_slice(&header);
+
+        for i in 0..self.header.qdcount {
+            let question = self.questions[i as usize].pack();
+            res.extend_from_slice(&question);
+        }
+        return res;
+    }
+}
+
 fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
@@ -122,23 +191,33 @@ fn main() {
         match udp_socket.recv_from(&mut buf) {
             Ok((size, source)) => {
                 println!("Received {} bytes from {}", size, source);
-                let dm = DNSMessage::parse(&buf);
-                println!("{:?}", dm);
+                // let dm = DNSMessage::parse(&buf);
+                // println!("{:?}", dm);
 
                 let r = DNSMessage {
-                    id: 1234,
-                    qr: true,
-                    opcode: 0,
-                    aa: 0,
-                    tc: 0,
-                    rd: 0,
-                    ra: 0,
-                    reserved: 0,
-                    rcode: 0,
-                    qdcount: 0,
-                    ancount: 0,
-                    nscount: 0,
-                    arcount: 0,
+                    header: DNSHeader {
+                        id: 1234,
+                        qr: true,
+                        opcode: 0,
+                        aa: 0,
+                        tc: 0,
+                        rd: 0,
+                        ra: 0,
+                        reserved: 0,
+                        rcode: 0,
+                        qdcount: 1,
+                        ancount: 0,
+                        nscount: 0,
+                        arcount: 0,
+                    },
+                    questions: vec![DNSQuestion {
+                        name: String::from("codecrafters.io"),
+                        r#type: 1,
+                        class: 1,
+                    }],
+                    answer: (),
+                    authority: (),
+                    additional: (),
                 };
                 let response = r.pack();
                 udp_socket
