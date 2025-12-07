@@ -25,6 +25,31 @@ struct DNSQuestion {
     class: u16,
 }
 
+#[derive(Debug, Clone)]
+struct DNSAnswer {
+    question: DNSQuestion,
+    ttl: i32,
+    len: u16,
+    data: Vec<u8>,
+}
+
+impl DNSAnswer {
+    fn pack(&self) -> Vec<u8> {
+        let mut res = self.question.pack();
+        match self.question.r#type {
+            1 => {
+                res.extend_from_slice(&self.ttl.to_be_bytes());
+                res.extend_from_slice(&self.len.to_be_bytes());
+                res.extend_from_slice(&self.data);
+            }
+            err => {
+                unimplemented!("type {err} not supported")
+            }
+        }
+        return res;
+    }
+}
+
 impl DNSQuestion {
     fn parse_from_buf(_buf: &[u8]) -> Self {
         Self {
@@ -54,7 +79,7 @@ impl DNSQuestion {
 struct DNSMessage {
     header: DNSHeader,
     questions: Vec<DNSQuestion>,
-    answer: (),
+    answers: Vec<DNSAnswer>,
     authority: (),
     additional: (),
 }
@@ -163,7 +188,7 @@ impl DNSMessage {
         Self {
             header,
             questions,
-            answer: (),
+            answers: todo!(),
             authority: (),
             additional: (),
         }
@@ -176,8 +201,14 @@ impl DNSMessage {
 
         for i in 0..self.header.qdcount {
             let question = self.questions[i as usize].pack();
-            res.extend_from_slice(&question);
+            res.extend(question);
         }
+
+        for i in 0..self.header.ancount {
+            let question = self.answers[i as usize].pack();
+            res.extend(question);
+        }
+
         return res;
     }
 }
@@ -193,9 +224,15 @@ fn main() {
         match udp_socket.recv_from(&mut buf) {
             Ok((size, source)) => {
                 println!("Received {} bytes from {}", size, source);
-                // let dm = DNSMessage::parse(&buf);
+                // let dm = DNSMessage::parse(&buf[..size]);
                 // println!("{:?}", dm);
 
+                // mock question:
+                let qs = DNSQuestion {
+                    name: String::from("codecrafters.io"),
+                    r#type: 1,
+                    class: 1,
+                };
                 let r = DNSMessage {
                     header: DNSHeader {
                         id: 1234,
@@ -212,12 +249,13 @@ fn main() {
                         nscount: 0,
                         arcount: 0,
                     },
-                    questions: vec![DNSQuestion {
-                        name: String::from("codecrafters.io"),
-                        r#type: 1,
-                        class: 1,
+                    questions: vec![qs.clone()],
+                    answers: vec![DNSAnswer {
+                        question: qs,
+                        ttl: 60,
+                        len: 4,
+                        data: vec![8, 8, 8, 8],
                     }],
-                    answer: (),
                     authority: (),
                     additional: (),
                 };
