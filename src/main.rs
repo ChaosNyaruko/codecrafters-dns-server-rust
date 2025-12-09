@@ -51,11 +51,29 @@ impl DNSAnswer {
 }
 
 impl DNSQuestion {
-    fn parse_from_buf(_buf: &[u8]) -> Self {
+    fn parse_from_buf(buf: &[u8], i: &mut usize) -> Self {
+        let mut names = Vec::new();
+        while buf[*i] != b'\0' {
+            let len = buf[*i] as usize;
+            *i += 1;
+            names.push(String::from_utf8_lossy(&buf[*i..*i + len]).into_owned());
+            *i += len;
+        }
+        let name = names.join(".");
+        *i += 1; // skip \0
+        let mut r#type = [0; 2];
+        r#type.copy_from_slice(&buf[*i..*i + 2]);
+        *i += 2;
+        let r#type = u16::from_be_bytes(r#type);
+
+        let mut class = [0; 2];
+        class.copy_from_slice(&buf[*i..*i + 2]);
+        *i += 2;
+        let class = u16::from_be_bytes(class);
         Self {
-            name: todo!(),
-            r#type: todo!(),
-            class: todo!(),
+            name,
+            r#type,
+            class,
         }
     }
 
@@ -117,16 +135,15 @@ impl DNSHeader {
         return res;
     }
 
-    fn parse_from_buf(buf: &[u8]) -> Self {
+    fn parse_from_buf(buf: &[u8], i: &mut usize) -> Self {
         let mut id = [0; 2];
-        let mut i: usize = 0;
-        id.copy_from_slice(&buf[i..i + 2]);
-        i += 2;
+        id.copy_from_slice(&buf[*i..*i + 2]);
+        *i += 2;
         let id = u16::from_be_bytes(id);
 
         let mut meta = [0; 2];
-        meta.copy_from_slice(&buf[i..i + 2]);
-        i += 2;
+        meta.copy_from_slice(&buf[*i..*i + 2]);
+        *i += 2;
 
         let qr = 0b10000000 & meta[0] == 1;
         let opcode = (meta[0] >> 3) & 0x0F;
@@ -139,25 +156,25 @@ impl DNSHeader {
         let rcode = (meta[1]) & 0xF;
 
         let mut qdcount = [0; 2];
-        qdcount.copy_from_slice(&buf[i..i + 2]);
-        i += 2;
+        qdcount.copy_from_slice(&buf[*i..*i + 2]);
+        *i += 2;
         let qdcount = u16::from_be_bytes(qdcount);
 
         let mut ancount = [0; 2];
-        ancount.copy_from_slice(&buf[i..i + 2]);
-        i += 2;
+        ancount.copy_from_slice(&buf[*i..*i + 2]);
+        *i += 2;
         let ancount = u16::from_be_bytes(ancount);
 
         let mut nscount = [0; 2];
-        nscount.copy_from_slice(&buf[i..i + 2]);
-        i += 2;
+        nscount.copy_from_slice(&buf[*i..*i + 2]);
+        *i += 2;
         let nscount = u16::from_be_bytes(nscount);
 
         let mut arcount = [0; 2];
-        arcount.copy_from_slice(&buf[i..i + 2]);
-        i += 2;
+        arcount.copy_from_slice(&buf[*i..*i + 2]);
+        *i += 2;
         let arcount = u16::from_be_bytes(arcount);
-        assert_eq!(i, 12);
+        assert_eq!(*i, 12);
 
         Self {
             id,
@@ -179,17 +196,11 @@ impl DNSHeader {
 
 impl DNSMessage {
     fn parse(buf: &[u8]) -> Self {
-        let header = DNSHeader::parse_from_buf(buf);
+        let mut i = 0;
+        let header = DNSHeader::parse_from_buf(buf, &mut i);
         let mut questions = Vec::<DNSQuestion>::with_capacity(header.qdcount as usize);
-        return Self {
-            header,
-            questions,
-            answers: Vec::new(),
-            authority: (),
-            additional: (),
-        };
         for _ in 0..header.qdcount {
-            let question = DNSQuestion::parse_from_buf(buf);
+            let question = DNSQuestion::parse_from_buf(buf, &mut i);
             questions.push(question);
         }
         Self {
@@ -235,11 +246,7 @@ fn main() {
                 println!("{:?}", dm);
 
                 // mock question:
-                let qs = DNSQuestion {
-                    name: String::from("codecrafters.io"),
-                    r#type: 1,
-                    class: 1,
-                };
+                let qs = dm.questions;
                 let r = DNSMessage {
                     header: DNSHeader {
                         id: dm.header.id,
@@ -256,13 +263,16 @@ fn main() {
                         nscount: 0,
                         arcount: 0,
                     },
-                    questions: vec![qs.clone()],
-                    answers: vec![DNSAnswer {
-                        question: qs,
-                        ttl: 60,
-                        len: 4,
-                        data: vec![8, 8, 8, 8],
-                    }],
+                    questions: qs.clone(),
+                    answers: qs
+                        .iter()
+                        .map(|q| DNSAnswer {
+                            question: q.clone(),
+                            ttl: 60,
+                            len: 4,
+                            data: vec![8, 8, 8, 8],
+                        })
+                        .collect(),
                     authority: (),
                     additional: (),
                 };
