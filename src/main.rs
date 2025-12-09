@@ -157,7 +157,7 @@ impl DNSHeader {
         arcount.copy_from_slice(&buf[i..i + 2]);
         i += 2;
         let arcount = u16::from_be_bytes(arcount);
-        // assert_eq!(i, 12); // TODO: in the parse section, and we have more fields.
+        assert_eq!(i, 12);
 
         Self {
             id,
@@ -181,6 +181,13 @@ impl DNSMessage {
     fn parse(buf: &[u8]) -> Self {
         let header = DNSHeader::parse_from_buf(buf);
         let mut questions = Vec::<DNSQuestion>::with_capacity(header.qdcount as usize);
+        return Self {
+            header,
+            questions,
+            answers: Vec::new(),
+            authority: (),
+            additional: (),
+        };
         for _ in 0..header.qdcount {
             let question = DNSQuestion::parse_from_buf(buf);
             questions.push(question);
@@ -188,7 +195,7 @@ impl DNSMessage {
         Self {
             header,
             questions,
-            answers: todo!(),
+            answers: Vec::new(), // TODO: better type
             authority: (),
             additional: (),
         }
@@ -224,8 +231,8 @@ fn main() {
         match udp_socket.recv_from(&mut buf) {
             Ok((size, source)) => {
                 println!("Received {} bytes from {}", size, source);
-                // let dm = DNSMessage::parse(&buf[..size]);
-                // println!("{:?}", dm);
+                let dm = DNSMessage::parse(&buf[..size]);
+                println!("{:?}", dm);
 
                 // mock question:
                 let qs = DNSQuestion {
@@ -235,15 +242,15 @@ fn main() {
                 };
                 let r = DNSMessage {
                     header: DNSHeader {
-                        id: 1234,
+                        id: dm.header.id,
                         qr: true,
-                        opcode: 0,
+                        opcode: dm.header.opcode,
                         aa: 0,
                         tc: 0,
-                        rd: 0,
+                        rd: dm.header.rd,
                         ra: 0,
                         reserved: 0,
-                        rcode: 0,
+                        rcode: if dm.header.opcode == 0 { 0 } else { 4 }, // 4: not implemented,
                         qdcount: 1,
                         ancount: 1,
                         nscount: 0,
