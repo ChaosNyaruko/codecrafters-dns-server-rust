@@ -61,15 +61,12 @@ impl DNSQuestion {
         }
         let name = names.join(".");
         *i += 1; // skip \0
-        let mut r#type = [0; 2];
-        r#type.copy_from_slice(&buf[*i..*i + 2]);
-        *i += 2;
-        let r#type = u16::from_be_bytes(r#type);
 
-        let mut class = [0; 2];
-        class.copy_from_slice(&buf[*i..*i + 2]);
+        let r#type = u16::from_be_bytes(buf[*i..*i + 2].try_into().unwrap());
         *i += 2;
-        let class = u16::from_be_bytes(class);
+        let class = u16::from_be_bytes(buf[*i..*i + 2].try_into().unwrap());
+        *i += 2;
+
         Self {
             name,
             r#type,
