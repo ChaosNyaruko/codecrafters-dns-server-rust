@@ -50,17 +50,75 @@ impl DNSAnswer {
     }
 }
 
+struct DNSQuestionsParser {
+    qdcount: usize,
+}
+
+impl DNSQuestionsParser {
+    fn parse(&mut self, buf: &[u8], i: &mut usize) -> Vec<DNSQuestion> {
+        let mut questions = Vec::<DNSQuestion>::with_capacity(self.qdcount as usize);
+        for _ in 0..self.qdcount {
+            let question = DNSQuestion::parse_from_buf(buf, i);
+            questions.push(question);
+        }
+        questions
+    }
+}
+
+fn is_pointer(b: u8) -> bool {
+    (b >> 6) & 0b11 == 0x3
+}
+
 impl DNSQuestion {
-    fn parse_from_buf(buf: &[u8], i: &mut usize) -> Self {
+    fn name_from_label(buf: &[u8], i: &mut usize) -> String {
         let mut names = Vec::new();
-        while buf[*i] != b'\0' {
+        while buf[*i] != b'\0' && !is_pointer(buf[*i]) {
             let len = buf[*i] as usize;
             *i += 1;
-            names.push(String::from_utf8_lossy(&buf[*i..*i + len]).into_owned());
+            let label = String::from_utf8_lossy(&buf[*i..*i + len]).into_owned();
+            names.push(label);
             *i += len;
         }
+        if buf[*i] == b'\0' {
+            *i += 1; // skip \0
+        } else {
+            // a sequence of labels + pointer
+            assert_eq!(
+                is_pointer(buf[*i]),
+                true,
+                "a label must be ending with 0 or a pointer"
+            );
+            let label = DNSQuestion::name_from_offset(buf, i);
+            names.push(label);
+        }
+
+        return names.join(".");
+    }
+
+    fn name_from_offset(buf: &[u8], i: &mut usize) -> String {
+        let mut offset =
+            (u16::from_be_bytes(buf[*i..*i + 2].try_into().unwrap()) & 0x3FFF) as usize;
+        *i += 2;
+
+        return DNSQuestion::name_from_label(buf, &mut offset);
+    }
+
+    fn parse_from_buf(buf: &[u8], i: &mut usize) -> Self {
+        let mut names = Vec::new();
+        let label_or_pointer = (buf[*i] >> 6) & 0b11;
+        match label_or_pointer {
+            0 => {
+                names.push(DNSQuestion::name_from_label(buf, i));
+            }
+            3 => {
+                let label = DNSQuestion::name_from_offset(buf, i);
+                names.push(label);
+            }
+            other => {
+                unimplemented!("reserved compression type {other}")
+            }
+        }
         let name = names.join(".");
-        *i += 1; // skip \0
 
         let r#type = u16::from_be_bytes(buf[*i..*i + 2].try_into().unwrap());
         *i += 2;
@@ -195,11 +253,10 @@ impl DNSMessage {
     fn parse(buf: &[u8]) -> Self {
         let mut i = 0;
         let header = DNSHeader::parse_from_buf(buf, &mut i);
-        let mut questions = Vec::<DNSQuestion>::with_capacity(header.qdcount as usize);
-        for _ in 0..header.qdcount {
-            let question = DNSQuestion::parse_from_buf(buf, &mut i);
-            questions.push(question);
-        }
+        let mut p = DNSQuestionsParser {
+            qdcount: header.qdcount as usize,
+        };
+        let questions = p.parse(buf, &mut i);
         Self {
             header,
             questions,
@@ -240,7 +297,7 @@ fn main() {
             Ok((size, source)) => {
                 println!("Received {} bytes from {}", size, source);
                 let dm = DNSMessage::parse(&buf[..size]);
-                println!("{:?}", dm);
+                eprintln!("{:?}", dm);
 
                 // mock question:
                 let qs = dm.questions;

@@ -35,3 +35,10 @@ Note: This section is for stages 2 and beyond.
    the first time you run it. Subsequent runs will be fast.
 1. Commit your changes and run `git push origin master` to submit your solution
    to CodeCrafters. Test output will be streamed to your terminal.
+
+# Testing
+For Parse compressed packet #yc9 section, you can use
+```bash
+echo -n '1e7c0100000200000000000003616263116c6f6e67617373646f6d61696e6e616d6503636f6d000001000103646566c01000010001' | xxd -r -p | nc -u -w 1 127.0.0.1 2053 | hexdump -C
+```
+
