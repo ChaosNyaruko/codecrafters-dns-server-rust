@@ -312,8 +312,8 @@ fn main() {
                         ra: 0,
                         reserved: 0,
                         rcode: if dm.header.opcode == 0 { 0 } else { 4 }, // 4: not implemented,
-                        qdcount: 1,
-                        ancount: 1,
+                        qdcount: dm.header.qdcount,
+                        ancount: dm.header.qdcount,
                         nscount: 0,
                         arcount: 0,
                     },
@@ -330,6 +330,7 @@ fn main() {
                     authority: (),
                     additional: (),
                 };
+                eprintln!("resp: {:?}", r);
                 let response = r.pack();
                 udp_socket
                     .send_to(&response, source)
