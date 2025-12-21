@@ -325,6 +325,12 @@ impl DNSMessage {
     fn from_forward(rm: &DNSMessage, dms: &Vec<DNSMessage>) -> Self {
         assert_eq!(dms.len(), rm.questions.len());
         let qs = rm.questions.clone();
+        let mut answers = Vec::new();
+        for dm in dms {
+            for a in &dm.answers {
+                answers.push(a.clone());
+            }
+        }
 
         DNSMessage {
             header: DNSHeader {
@@ -334,29 +340,16 @@ impl DNSMessage {
                 aa: 0,
                 tc: 0,
                 rd: rm.header.rd,
-                ra: 0,
+                ra: 1,
                 reserved: 0,
                 rcode: if rm.header.opcode == 0 { 0 } else { 4 }, // 4: not implemented,
                 qdcount: rm.header.qdcount,
-                ancount: rm.header.qdcount,
+                ancount: dms.iter().map(|dm| dm.answers.len() as u16).sum::<u16>(),
                 nscount: 0,
                 arcount: 0,
             },
             questions: qs.clone(),
-            answers: qs
-                .iter()
-                .enumerate()
-                .map(|(i, q)| DNSAnswer {
-                    question: q.clone(),
-                    ttl: 60,
-                    len: 4,
-                    data: if dms[i].answers.len() == 0 {
-                        Vec::new()
-                    } else {
-                        dms[i].answers[0].data.clone()
-                    },
-                })
-                .collect(),
+            answers: answers,
             authority: (),
             additional: (),
         }
@@ -369,14 +362,15 @@ impl DNSMessage {
             qdcount: header.qdcount as usize,
         };
         let questions = p.parse(buf, &mut i);
-        eprintln!(
-            "resolver parsed questions: {:?}, ancount: {}",
-            questions, header.ancount,
-        );
         let mut answers = Vec::new();
         for _ in 0..header.ancount {
             answers.push(DNSAnswer::parse(buf, &mut i));
         }
+        eprintln!(
+            "resolver parsed questions: {:?}, ancount: {}",
+            questions, header.ancount,
+        );
+        eprintln!("resolver parsed answers: {:?}", answers);
         Self {
             header,
             questions,
@@ -423,7 +417,7 @@ fn main() {
             Ok((size, source)) => {
                 println!("Received {} bytes from {}", size, source);
                 let dm = DNSMessage::parse(&buf[..size]);
-                eprintln!("{:?}", dm);
+                eprintln!("we got request: {:?}", dm);
 
                 let r = if resolver == "" {
                     DNSMessage::mock_resp(&dm)
