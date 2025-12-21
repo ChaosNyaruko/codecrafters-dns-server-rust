@@ -34,6 +34,21 @@ struct DNSAnswer {
 }
 
 impl DNSAnswer {
+    fn parse(buf: &[u8], i: &mut usize) -> Self {
+        let q = DNSQuestionsParser { qdcount: 1 }.parse(buf, i);
+        let ttl = u32::from_be_bytes(buf[*i..*i + 4].try_into().unwrap());
+        *i = *i + 4;
+        let len = u16::from_be_bytes(buf[*i..*i + 2].try_into().unwrap());
+        *i = *i + 2;
+        let data: Vec<u8> = buf[*i..*i + len as usize].to_vec();
+        *i = *i + len as usize;
+        DNSAnswer {
+            question: q[0].clone(),
+            ttl: ttl as i32,
+            len,
+            data,
+        }
+    }
     fn pack(&self) -> Vec<u8> {
         let mut res = self.question.pack();
         match self.question.r#type {
@@ -250,6 +265,103 @@ impl DNSHeader {
 }
 
 impl DNSMessage {
+    fn forward_single_question(rm: &DNSMessage, i: usize) -> Self {
+        DNSMessage {
+            header: DNSHeader {
+                id: rm.header.id,
+                qr: false,
+                opcode: rm.header.opcode,
+                aa: 0,
+                tc: 0,
+                rd: 1, // NOTE: we want the resolver recursively resolve the query for our server
+                ra: 0,
+                reserved: 0,
+                rcode: 0,
+                qdcount: 1, // the tester resolver only support one question
+                ancount: 0,
+                nscount: 0,
+                arcount: 0,
+            },
+            questions: vec![rm.questions[i].clone()],
+            answers: Vec::new(),
+            authority: (),
+            additional: (),
+        }
+    }
+
+    fn mock_resp(dm: &DNSMessage) -> Self {
+        let qs = dm.questions.clone();
+        DNSMessage {
+            header: DNSHeader {
+                id: dm.header.id,
+                qr: true,
+                opcode: dm.header.opcode,
+                aa: 0,
+                tc: 0,
+                rd: dm.header.rd,
+                ra: 0,
+                reserved: 0,
+                rcode: if dm.header.opcode == 0 { 0 } else { 4 }, // 4: not implemented,
+                qdcount: dm.header.qdcount,
+                ancount: dm.header.qdcount,
+                nscount: 0,
+                arcount: 0,
+            },
+            questions: qs.clone(),
+            answers: qs
+                .iter()
+                .map(|q| DNSAnswer {
+                    question: q.clone(),
+                    ttl: 60,
+                    len: 4,
+                    data: vec![8, 8, 8, 8],
+                })
+                .collect(),
+            authority: (),
+            additional: (),
+        }
+    }
+
+    fn from_forward(rm: &DNSMessage, dms: &Vec<DNSMessage>) -> Self {
+        assert_eq!(dms.len(), rm.questions.len());
+        let qs = rm.questions.clone();
+
+        DNSMessage {
+            header: DNSHeader {
+                id: rm.header.id,
+                qr: true,
+                opcode: rm.header.opcode,
+                aa: 0,
+                tc: 0,
+                rd: rm.header.rd,
+                ra: 0,
+                reserved: 0,
+                rcode: if rm.header.opcode == 0 { 0 } else { 4 }, // 4: not implemented,
+                qdcount: rm.header.qdcount,
+                ancount: rm.header.qdcount,
+                nscount: 0,
+                arcount: 0,
+            },
+            questions: qs.clone(),
+            answers: qs
+                .iter()
+                .enumerate()
+                .map(|(i, q)| DNSAnswer {
+                    question: q.clone(),
+                    ttl: 60,
+                    len: 4,
+                    data: if dms[i].answers.len() == 0 {
+                        Vec::new()
+                    } else {
+                        dms[i].answers[0].data.clone()
+                    },
+                })
+                .collect(),
+            authority: (),
+            additional: (),
+        }
+    }
+
     fn parse(buf: &[u8]) -> Self {
         let mut i = 0;
         let header = DNSHeader::parse_from_buf(buf, &mut i);
@@ -257,10 +369,18 @@ impl DNSMessage {
             qdcount: header.qdcount as usize,
         };
         let questions = p.parse(buf, &mut i);
+        eprintln!(
+            "resolver parsed questions: {:?}, ancount: {}",
+            questions, header.ancount,
+        );
+        let mut answers = Vec::new();
+        for _ in 0..header.ancount {
+            answers.push(DNSAnswer::parse(buf, &mut i));
+        }
         Self {
             header,
             questions,
-            answers: Vec::new(), // TODO: better type
+            answers: answers,
             authority: (),
             additional: (),
         }
@@ -288,6 +408,12 @@ impl DNSMessage {
 fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
+    let args: Vec<_> = std::env::args().collect();
+    let resolver = if args.len() >= 3 && args[1] == "--resolver" {
+        args[2].clone()
+    } else {
+        "".to_string()
+    };
 
     let udp_socket = UdpSocket::bind("127.0.0.1:2053").expect("Failed to bind to address");
     let mut buf = [0; 512];
@@ -299,38 +425,29 @@ fn main() {
                 let dm = DNSMessage::parse(&buf[..size]);
                 eprintln!("{:?}", dm);
 
-                // mock question:
-                let qs = dm.questions;
-                let r = DNSMessage {
-                    header: DNSHeader {
-                        id: dm.header.id,
-                        qr: true,
-                        opcode: dm.header.opcode,
-                        aa: 0,
-                        tc: 0,
-                        rd: dm.header.rd,
-                        ra: 0,
-                        reserved: 0,
-                        rcode: if dm.header.opcode == 0 { 0 } else { 4 }, // 4: not implemented,
-                        qdcount: dm.header.qdcount,
-                        ancount: dm.header.qdcount,
-                        nscount: 0,
-                        arcount: 0,
-                    },
-                    questions: qs.clone(),
-                    answers: qs
-                        .iter()
-                        .map(|q| DNSAnswer {
-                            question: q.clone(),
-                            ttl: 60,
-                            len: 4,
-                            data: vec![8, 8, 8, 8],
-                        })
-                        .collect(),
-                    authority: (),
-                    additional: (),
+                let r = if resolver == "" {
+                    DNSMessage::mock_resp(&dm)
+                } else {
+                    let mut dms = Vec::new();
+                    for i in 0..dm.questions.len() {
+                        let forward = DNSMessage::forward_single_question(&dm, i);
+                        let forward = forward.pack();
+                        let udp_socket =
+                            UdpSocket::bind("0.0.0.0:0").expect("Failed to bind to address");
+                        udp_socket
+                            .send_to(&forward, &resolver)
+                            .expect(&format!("send to resolver {}", resolver));
+                        let mut resp = [0; 512];
+                        let (size, source) = udp_socket
+                            .recv_from(&mut resp)
+                            .expect("receive from resolver");
+                        assert_eq!(source.to_string(), resolver);
+                        let r = DNSMessage::parse(&resp[..size]);
+                        eprintln!("resolver gives me: {:?}", r);
+                        dms.push(r);
+                    }
+                    DNSMessage::from_forward(&dm, &dms)
                 };
-                eprintln!("resp: {:?}", r);
                 let response = r.pack();
                 udp_socket
                     .send_to(&response, source)
